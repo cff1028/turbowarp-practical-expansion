@@ -1,19 +1,20 @@
-class IframeExtension {
+class UniversalIframeExtension {
   constructor() {
-    this.iframeId = 'twIframe';
-    this.stageContainer = null;
+    this.iframeId = 'universalIframe';
+    this.retryCount = 0;
+    this.maxRetries = 50; // 最多尝试50次（约5秒）
   }
 
   getInfo() {
     return {
-      id: 'iframeStage',
-      name: '舞台 Iframe',
+      id: 'universalIframe',
+      name: '通用 Iframe',
       color1: '#2B8CC4',
       blocks: [
         {
-          opcode: 'createIframe',
+          opcode: 'safeCreateIframe',
           blockType: Scratch.BlockType.COMMAND,
-          text: '创建窗口 URL [URL] 宽度 [WIDTH] 高度 [HEIGHT] 中心X [X] 中心Y [Y]',
+          text: '安全创建窗口 URL [URL] 宽度 [WIDTH] 高度 [HEIGHT]',
           arguments: {
             URL: {
               type: Scratch.ArgumentType.STRING,
@@ -26,68 +27,85 @@ class IframeExtension {
             HEIGHT: {
               type: Scratch.ArgumentType.NUMBER,
               defaultValue: 200
-            },
-            X: {
-              type: Scratch.ArgumentType.NUMBER,
-              defaultValue: 50
-            },
-            Y: {
-              type: Scratch.ArgumentType.NUMBER,
-              defaultValue: 50
             }
           }
         },
         {
-          opcode: 'removeIframe',
+          opcode: 'safeRemoveIframe',
           blockType: Scratch.BlockType.COMMAND,
-          text: '删除窗口'
+          text: '安全删除窗口'
         }
       ]
     };
   }
 
-  createIframe(args) {
-    this.removeIframe();
+  safeCreateIframe(args) {
+    this.safeRemoveIframe();
     
-    try {
-      // 通过渲染器获取舞台 canvas
-      const canvas = Scratch.vm.runtime.renderer.canvas;
-      this.stageContainer = canvas.parentElement;
-      
-      // 设置舞台容器定位上下文
-      const containerStyle = getComputedStyle(this.stageContainer);
-      if (containerStyle.position === 'static') {
-        this.stageContainer.style.position = 'relative';
+    // 异步查找舞台容器
+    const findContainer = () => {
+      try {
+        // 方法1：通过 Scratch VM 获取
+        if (typeof Scratch !== 'undefined' && Scratch.vm?.runtime?.renderer?.canvas) {
+          const canvas = Scratch.vm.runtime.renderer.canvas;
+          return canvas.parentElement;
+        }
+        
+        // 方法2：通过 DOM 特征查找（兼容非TurboWarp环境）
+        const candidates = document.querySelectorAll('canvas');
+        for (const canvas of candidates) {
+          if (canvas.width === 408 && canvas.height === 306) {
+            return canvas.parentElement;
+          }
+        }
+        
+        // 方法3：通过常见类名查找
+        return document.querySelector('.stage-wrapper, .guiPlayer, .player') 
+               || document.body;
+      } catch (error) {
+        return document.body; // 终极回退方案
       }
+    };
 
-      // 创建 iframe
-      const iframe = document.createElement('iframe');
-      iframe.id = this.iframeId;
-      iframe.style.cssText = `
-        position: absolute;
-        width: ${args.WIDTH}px;
-        height: ${args.HEIGHT}px;
-        left: ${args.X}%;
-        top: ${args.Y}%;
-        transform: translate(-${args.X}%, -${args.Y}%);
-        border: 2px solid ${this.getInfo().color1};
-        border-radius: 8px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-        background: white;
-        z-index: 9999;
-      `;
-      iframe.src = args.URL;
+    // 重试机制
+    const tryCreate = () => {
+      this.retryCount++;
+      const container = findContainer();
+      
+      if (container) {
+        const iframe = document.createElement('iframe');
+        iframe.id = this.iframeId;
+        iframe.style.cssText = `
+          position: absolute;
+          width: ${args.WIDTH}px;
+          height: ${args.HEIGHT}px;
+          left: 50%;
+          top: 50%;
+          transform: translate(-50%, -50%);
+          border: 2px solid ${this.getInfo().color1};
+          z-index: 9999;
+        `;
+        iframe.src = args.URL;
+        
+        // 确保容器有定位上下文
+        if (getComputedStyle(container).position === 'static') {
+          container.style.position = 'relative';
+        }
+        
+        container.appendChild(iframe);
+      } else if (this.retryCount < this.maxRetries) {
+        setTimeout(tryCreate, 100); // 每100ms重试一次
+      }
+    };
 
-      this.stageContainer.appendChild(iframe);
-    } catch (error) {
-      console.error('创建 iframe 失败:', error);
-    }
+    tryCreate();
   }
 
-  removeIframe() {
-    const iframe = this.stageContainer?.querySelector(`#${this.iframeId}`);
+  safeRemoveIframe() {
+    const iframe = document.getElementById(this.iframeId);
     if (iframe) iframe.remove();
+    this.retryCount = 0;
   }
 }
 
-Scratch.extensions.register(new IframeExtension());
+Scratch.extensions.register(new UniversalIframeExtension());
